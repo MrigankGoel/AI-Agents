@@ -6,7 +6,7 @@ These are my notes on using PyTorch to build and train neural networks, summariz
 PyTorch is a Python library for neural networks. It’s easy to use and great for deep learning.
 
 ## Tensors
-Tensors are arrays optimized for math. They’re the core of PyTorch for storing data like images.
+Tensors are arrays optimized for math, used to store data like images.
 
 ```python
 import torch
@@ -14,7 +14,7 @@ x = torch.tensor([1, 2, 3])  # 1D tensor
 ```
 
 ## Autograd
-Autograd computes gradients automatically for training. I tested it like this:
+Autograd computes gradients automatically for training. I tested it:
 
 ```python
 x = torch.tensor(2.0, requires_grad=True)
@@ -46,7 +46,7 @@ class MyModel(nn.Module):
 ```
 
 ## Dataset
-I created a `Dataset` to organize data for PyTorch:
+I created a `Dataset` to organize data:
 
 ```python
 from torch.utils.data import Dataset
@@ -104,63 +104,74 @@ transform = transforms.Normalize(mean=0.5, std=0.5)
 ```
 
 ## Hyperparameter Tuning
-I tuned hyperparameters like learning rate and batch size using grid search to optimize performance:
+I used Optuna for hyperparameter tuning to optimize parameters like learning rate, batch size, and number of layers. Here’s the code I worked with:
 
 ```python
+import optuna
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
+import mlflow
 
-class MyModel(nn.Module):
-    def __init__(self):
-        super(MyModel, self).__init__()
-        self.layer1 = nn.Linear(10, 5)
-        self.layer2 = nn.Linear(5, 2)
-    def forward(self, x):
-        x = torch.relu(self.layer1(x))
-        x = self.layer2(x)
-        return x
+def objective(trial):
+    num_hidden_layers = trial.suggest_int("num_hidden_layers", 1, 5)
+    neurons_per_layer = trial.suggest_int("neurons_per_layer", 80, 128, step=8)
+    epochs = trial.suggest_int("epochs", 10, 50, step=10)
+    learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-1, log=True)
+    dropout_rate = trial.suggest_float("dropout_rate", 0.1, 0.5, step=0.1)
+    batch_size = trial.suggest_categorical("batch_size", [16, 32, 64, 128])
+    optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "SGD"])
+    weight_decay = trial.suggest_float("weight_decay", 1e-5, 1e-3, log=True)
 
-learning_rates = [0.001, 0.01]
-batch_sizes = [16, 32]
-optimizers = [optim.Adam, optim.SGD]
-epochs = 5
+    train_dataset = CustomDataset(X_train, y_train)
+    test_dataset = CustomDataset(X_test, y_test)
 
-dataset = MyDataset()
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
 
-best_loss = float('inf')
-best_params = {}
+    input_dim = 784
+    output_dim = 10
 
-for lr in learning_rates:
-    for batch_size in batch_sizes:
-        for opt_class in optimizers:
-            dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-            model = MyModel().to(device)
-            criterion = nn.MSELoss()
-            optimizer = opt_class(model.parameters(), lr=lr)
-            
-            for epoch in range(epochs):
-                total_loss = 0
-                for data in dataloader:
-                    data = data.to(device)
-                    optimizer.zero_grad()
-                    outputs = model(data)
-                    loss = criterion(outputs, data)
-                    loss.backward()
-                    optimizer.step()
-                    total_loss += loss.item()
-                avg_loss = total_loss / len(dataloader)
-            
-            if avg_loss < best_loss:
-                best_loss = avg_loss
-                best_params = {'lr': lr, 'batch_size': batch_size, 'optimizer': opt_class.__name__}
+    model = MyNN(input_dim, output_dim, num_hidden_layers, neurons_per_layer, dropout_rate)
+    model.to("cuda")
 
-print(f"Best parameters: {best_params}, Best loss: {best_loss}")
+    criterion = nn.CrossEntropyLoss()
+    if optimizer_name == "SGD": 
+        optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    else:
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
+    for epoch in range(epochs):
+        model.train()
+        for batch_features, batch_labels in train_loader:
+            batch_features, batch_labels = batch_features.to("cuda"), batch_labels.to("cuda")
+            outputs = model(batch_features)
+            loss = criterion(outputs, batch_labels)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+    model.eval()
+    total = correct = 0
+    with torch.no_grad():
+        for batch_features, batch_labels in test_loader:
+            batch_features, batch_labels = batch_features.to("cuda"), batch_labels.to("cuda")
+            outputs = model(batch_features)
+            _, predicted = torch.max(outputs, 1)
+            total += batch_labels.shape[0]
+            correct += (predicted == batch_labels).sum().item()
+        accuracy = correct / total
+        
+    return accuracy
+
+study = optuna.create_study(direction="maximize")
+study.optimize(objective, n_trials=50)
+
+print(f"Best parameters: {study.best_params}, Best accuracy: {study.best_value}")
 ```
 
-I learned that tuning learning rates, batch sizes, and optimizers improves model performance, but grid search takes time.
+I learned that Optuna efficiently tests combinations of hyperparameters, improving model accuracy compared to manual tuning.
 
 ## Transfer Learning
 Transfer learning uses pre-trained models and fine-tunes them. I tried:
@@ -173,4 +184,4 @@ model.fc = nn.Linear(model.fc.in_features, 2)
 ```
 
 ## My Takeaways
-I installed PyTorch (`pip install torch torchvision`) and worked with tensors, models, and data loading. I improved models with dropouts, normalization, and hyperparameter tuning. Transfer learning saved time. These notes reflect my PyTorch journey!
+I installed PyTorch (`pip install torch torchvision`) and worked with tensors, models, and data loading. I improved models with dropouts, normalization, and hyperparameter tuning using Optuna. Transfer learning saved time. These notes reflect my PyTorch journey!
